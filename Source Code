@@ -1,0 +1,302 @@
+"""
+model.py - Machine Learning Model Training Module
+
+This module handles:
+- Loading the phishing URL dataset
+- Extracting features from URLs
+- Training a Random Forest classifier
+- Saving the trained model for predictions
+"""
+
+import pandas as pd
+import pickle
+import re
+from urllib.parse import urlparse
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+import os
+
+
+def extract_features(url):
+    """
+    Extract numerical features from a URL for ML classification.
+    
+    Features extracted:
+    1. url_length: Total length of the URL
+    2. num_dots: Count of dots (.) in URL
+    3. num_hyphens: Count of hyphens (-) in URL
+    4. num_underscores: Count of underscores (_) in URL
+    5. num_slashes: Count of forward slashes (/) in URL
+    6. num_digits: Count of numeric digits in URL
+    7. num_special_chars: Count of special characters (@, !, #, $, %, etc.)
+    8. has_https: Whether URL uses HTTPS (1) or not (0)
+    9. has_ip_address: Whether URL contains an IP address pattern
+    10. num_subdomains: Number of subdomains in the URL
+    11. path_length: Length of the URL path
+    12. has_suspicious_words: Contains words like 'login', 'secure', 'bank', etc.
+    
+    Args:
+        url (str): The URL to analyze
+        
+    Returns:
+        list: List of numerical features
+    """
+    # Initialize features dictionary
+    features = {}
+    
+    # Parse the URL
+    try:
+        parsed = urlparse(url)
+        domain = parsed.netloc
+        path = parsed.path
+    except:
+        domain = url
+        path = ""
+    
+    # Feature 1: URL length
+    features['url_length'] = len(url)
+    
+    # Feature 2: Number of dots
+    features['num_dots'] = url.count('.')
+    
+    # Feature 3: Number of hyphens
+    features['num_hyphens'] = url.count('-')
+    
+    # Feature 4: Number of underscores
+    features['num_underscores'] = url.count('_')
+    
+    # Feature 5: Number of slashes
+    features['num_slashes'] = url.count('/')
+    
+    # Feature 6: Number of digits
+    features['num_digits'] = sum(c.isdigit() for c in url)
+    
+    # Feature 7: Number of special characters
+    special_chars = ['@', '!', '#', '$', '%', '^', '&', '*', '(', ')', '=', '+']
+    features['num_special_chars'] = sum(url.count(char) for char in special_chars)
+    
+    # Feature 8: HTTPS presence (secure connection)
+    features['has_https'] = 1 if url.startswith('https') else 0
+    
+    # Feature 9: IP address presence (suspicious pattern)
+    ip_pattern = r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}'
+    features['has_ip_address'] = 1 if re.search(ip_pattern, url) else 0
+    
+    # Feature 10: Number of subdomains
+    if domain:
+        features['num_subdomains'] = len(domain.split('.')) - 2
+        features['num_subdomains'] = max(0, features['num_subdomains'])
+    else:
+        features['num_subdomains'] = 0
+    
+    # Feature 11: Path length
+    features['path_length'] = len(path)
+    
+    # Feature 12: Suspicious words presence
+    suspicious_words = ['login', 'secure', 'bank', 'account', 'update', 'verify',
+                       'signin', 'password', 'credential', 'confirm', 'suspend']
+    url_lower = url.lower()
+    features['has_suspicious_words'] = 1 if any(word in url_lower for word in suspicious_words) else 0
+    
+    # Return features as a list (in consistent order)
+    return [
+        features['url_length'],
+        features['num_dots'],
+        features['num_hyphens'],
+        features['num_underscores'],
+        features['num_slashes'],
+        features['num_digits'],
+        features['num_special_chars'],
+        features['has_https'],
+        features['has_ip_address'],
+        features['num_subdomains'],
+        features['path_length'],
+        features['has_suspicious_words']
+    ]
+
+
+def load_dataset(filepath):
+    """
+    Load the phishing URL dataset from CSV file.
+    
+    Args:
+        filepath (str): Path to the CSV file
+        
+    Returns:
+        pandas.DataFrame: Loaded dataset
+    """
+    print(f"[*] Loading dataset from: {filepath}")
+    
+    try:
+        df = pd.read_csv(filepath)
+        print(f"[+] Dataset loaded successfully!")
+        print(f"[+] Total samples: {len(df)}")
+        print(f"[+] Phishing URLs: {len(df[df['label'] == 1])}")
+        print(f"[+] Safe URLs: {len(df[df['label'] == 0])}")
+        return df
+    except FileNotFoundError:
+        print(f"[-] Error: Dataset file not found at {filepath}")
+        return None
+    except Exception as e:
+        print(f"[-] Error loading dataset: {e}")
+        return None
+
+
+def prepare_data(df):
+    """
+    Prepare the dataset for training by extracting features.
+    
+    Args:
+        df (pandas.DataFrame): Raw dataset with 'url' and 'label' columns
+        
+    Returns:
+        tuple: (X_train, X_test, y_train, y_test)
+    """
+    print("\n[*] Extracting features from URLs...")
+    
+    # Extract features for each URL
+    X = []
+    for url in df['url']:
+        features = extract_features(url)
+        X.append(features)
+    
+    # Get labels
+    y = df['label'].values
+    
+    # Split into training and testing sets (80% train, 20% test)
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
+    
+    print(f"[+] Feature extraction complete!")
+    print(f"[+] Training samples: {len(X_train)}")
+    print(f"[+] Testing samples: {len(X_test)}")
+    
+    return X_train, X_test, y_train, y_test
+
+
+def train_model(X_train, y_train):
+    """
+    Train a Random Forest classifier on the prepared data.
+    
+    Args:
+        X_train: Training features
+        y_train: Training labels
+        
+    Returns:
+        RandomForestClassifier: Trained model
+    """
+    print("\n[*] Training Random Forest classifier...")
+    
+    # Initialize the Random Forest model
+    # n_estimators: number of trees in the forest
+    # random_state: for reproducibility
+    model = RandomForestClassifier(
+        n_estimators=100,      # 100 decision trees
+        max_depth=10,          # Maximum depth of each tree
+        random_state=42,       # For reproducible results
+        n_jobs=-1              # Use all CPU cores
+    )
+    
+    # Train the model
+    model.fit(X_train, y_train)
+    
+    print("[+] Model training complete!")
+    
+    return model
+
+
+def evaluate_model(model, X_test, y_test):
+    """
+    Evaluate the trained model's performance.
+    
+    Args:
+        model: Trained classifier
+        X_test: Test features
+        y_test: Test labels
+    """
+    print("\n[*] Evaluating model performance...")
+    
+    # Make predictions on test set
+    y_pred = model.predict(X_test)
+    
+    # Calculate accuracy
+    accuracy = accuracy_score(y_test, y_pred)
+    print(f"\n{'='*50}")
+    print(f"MODEL PERFORMANCE METRICS")
+    print(f"{'='*50}")
+    print(f"Accuracy: {accuracy * 100:.2f}%")
+    
+    # Print detailed classification report
+    print(f"\nClassification Report:")
+    print(classification_report(y_test, y_pred, target_names=['Safe', 'Phishing']))
+    
+    # Print confusion matrix
+    print(f"Confusion Matrix:")
+    cm = confusion_matrix(y_test, y_pred)
+    print(f"  Predicted:  Safe  Phishing")
+    print(f"  Actual Safe:   {cm[0][0]:4d}    {cm[0][1]:4d}")
+    print(f"  Actual Phish:  {cm[1][0]:4d}    {cm[1][1]:4d}")
+    print(f"{'='*50}")
+    
+    return accuracy
+
+
+def save_model(model, filepath):
+    """
+    Save the trained model to a file using pickle.
+    
+    Args:
+        model: Trained model to save
+        filepath (str): Path where to save the model
+    """
+    print(f"\n[*] Saving model to: {filepath}")
+    
+    # Create directory if it doesn't exist
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    
+    with open(filepath, 'wb') as f:
+        pickle.dump(model, f)
+    
+    print("[+] Model saved successfully!")
+
+
+def main():
+    """
+    Main function to orchestrate the model training pipeline.
+    """
+    print("="*60)
+    print("   AI-Based QR Code Phishing Detection System")
+    print("   Model Training Module")
+    print("="*60)
+    
+    # Define paths
+    dataset_path = os.path.join(os.path.dirname(__file__), '..', 'dataset', 'phishing_urls.csv')
+    model_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'phishing_model.pkl')
+    
+    # Step 1: Load the dataset
+    df = load_dataset(dataset_path)
+    if df is None:
+        return
+    
+    # Step 2: Prepare data (extract features and split)
+    X_train, X_test, y_train, y_test = prepare_data(df)
+    
+    # Step 3: Train the model
+    model = train_model(X_train, y_train)
+    
+    # Step 4: Evaluate the model
+    accuracy = evaluate_model(model, X_test, y_test)
+    
+    # Step 5: Save the model
+    save_model(model, model_path)
+    
+    print("\n[+] Training pipeline completed successfully!")
+    print(f"[+] Model saved to: {model_path}")
+    print(f"[+] Final accuracy: {accuracy * 100:.2f}%")
+
+
+# Run the training when script is executed directly
+if __name__ == "__main__":
+    main()
