@@ -1,0 +1,718 @@
+code/model.py
+python
+
+
+"""
+model.py - Machine Learning Model Training Module
+This module handles:
+- Loading the phishing URL dataset
+- Extracting features from URLs
+- Training a Random Forest classifier
+- Saving the trained model for predictions
+"""
+import pandas as pd
+import pickle
+import re
+from urllib.parse import urlparse
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+import os
+def extract_features(url):
+    """
+    Extract numerical features from a URL for ML classification.
+    
+    Features extracted:
+    1. url_length: Total length of the URL
+    2. num_dots: Count of dots (.) in URL
+    3. num_hyphens: Count of hyphens (-) in URL
+    4. num_underscores: Count of underscores (_) in URL
+    5. num_slashes: Count of forward slashes (/) in URL
+    6. num_digits: Count of numeric digits in URL
+    7. num_special_chars: Count of special characters (@, !, #, $, %, etc.)
+    8. has_https: Whether URL uses HTTPS (1) or not (0)
+    9. has_ip_address: Whether URL contains an IP address pattern
+    10. num_subdomains: Number of subdomains in the URL
+    11. path_length: Length of the URL path
+    12. has_suspicious_words: Contains words like 'login', 'secure', 'bank', etc.
+    
+    Args:
+        url (str): The URL to analyze
+        
+    Returns:
+        list: List of numerical features
+    """
+    # Initialize features dictionary
+    features = {}
+    
+    # Parse the URL
+    try:
+        parsed = urlparse(url)
+        domain = parsed.netloc
+        path = parsed.path
+    except:
+        domain = url
+        path = ""
+    
+    # Feature 1: URL length
+    features['url_length'] = len(url)
+    
+    # Feature 2: Number of dots
+    features['num_dots'] = url.count('.')
+    
+    # Feature 3: Number of hyphens
+    features['num_hyphens'] = url.count('-')
+    
+    # Feature 4: Number of underscores
+    features['num_underscores'] = url.count('_')
+    
+    # Feature 5: Number of slashes
+    features['num_slashes'] = url.count('/')
+    
+    # Feature 6: Number of digits
+    features['num_digits'] = sum(c.isdigit() for c in url)
+    
+    # Feature 7: Number of special characters
+    special_chars = ['@', '!', '#', '$', '%', '^', '&', '*', '(', ')', '=', '+']
+    features['num_special_chars'] = sum(url.count(char) for char in special_chars)
+    
+    # Feature 8: HTTPS presence (secure connection)
+    features['has_https'] = 1 if url.startswith('https') else 0
+    
+    # Feature 9: IP address presence (suspicious pattern)
+    ip_pattern = r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}'
+    features['has_ip_address'] = 1 if re.search(ip_pattern, url) else 0
+    
+    # Feature 10: Number of subdomains
+    if domain:
+        features['num_subdomains'] = len(domain.split('.')) - 2
+        features['num_subdomains'] = max(0, features['num_subdomains'])
+    else:
+        features['num_subdomains'] = 0
+    
+    # Feature 11: Path length
+    features['path_length'] = len(path)
+    
+    # Feature 12: Suspicious words presence
+    suspicious_words = ['login', 'secure', 'bank', 'account', 'update', 'verify',
+                       'signin', 'password', 'credential', 'confirm', 'suspend']
+    url_lower = url.lower()
+    features['has_suspicious_words'] = 1 if any(word in url_lower for word in suspicious_words) else 0
+    
+    # Return features as a list (in consistent order)
+    return [
+        features['url_length'],
+        features['num_dots'],
+        features['num_hyphens'],
+        features['num_underscores'],
+        features['num_slashes'],
+        features['num_digits'],
+        features['num_special_chars'],
+        features['has_https'],
+        features['has_ip_address'],
+        features['num_subdomains'],
+        features['path_length'],
+        features['has_suspicious_words']
+    ]
+def load_dataset(filepath):
+    """
+    Load the phishing URL dataset from CSV file.
+    
+    Args:
+        filepath (str): Path to the CSV file
+        
+    Returns:
+        pandas.DataFrame: Loaded dataset
+    """
+    print(f"[*] Loading dataset from: {filepath}")
+    
+    try:
+        df = pd.read_csv(filepath)
+        print(f"[+] Dataset loaded successfully!")
+        print(f"[+] Total samples: {len(df)}")
+        print(f"[+] Phishing URLs: {len(df[df['label'] == 1])}")
+        print(f"[+] Safe URLs: {len(df[df['label'] == 0])}")
+        return df
+    except FileNotFoundError:
+        print(f"[-] Error: Dataset file not found at {filepath}")
+        return None
+    except Exception as e:
+        print(f"[-] Error loading dataset: {e}")
+        return None
+def prepare_data(df):
+    """
+    Prepare the dataset for training by extracting features.
+    
+    Args:
+        df (pandas.DataFrame): Raw dataset with 'url' and 'label' columns
+        
+    Returns:
+        tuple: (X_train, X_test, y_train, y_test)
+    """
+    print("\n[*] Extracting features from URLs...")
+    
+    # Extract features for each URL
+    X = []
+    for url in df['url']:
+        features = extract_features(url)
+        X.append(features)
+    
+    # Get labels
+    y = df['label'].values
+    
+    # Split into training and testing sets (80% train, 20% test)
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
+    
+    print(f"[+] Feature extraction complete!")
+    print(f"[+] Training samples: {len(X_train)}")
+    print(f"[+] Testing samples: {len(X_test)}")
+    
+    return X_train, X_test, y_train, y_test
+def train_model(X_train, y_train):
+    """
+    Train a Random Forest classifier on the prepared data.
+    
+    Args:
+        X_train: Training features
+        y_train: Training labels
+        
+    Returns:
+        RandomForestClassifier: Trained model
+    """
+    print("\n[*] Training Random Forest classifier...")
+    
+    # Initialize the Random Forest model
+    # n_estimators: number of trees in the forest
+    # random_state: for reproducibility
+    model = RandomForestClassifier(
+        n_estimators=100,      # 100 decision trees
+        max_depth=10,          # Maximum depth of each tree
+        random_state=42,       # For reproducible results
+        n_jobs=-1              # Use all CPU cores
+    )
+    
+    # Train the model
+    model.fit(X_train, y_train)
+    
+    print("[+] Model training complete!")
+    
+    return model
+def evaluate_model(model, X_test, y_test):
+    """
+    Evaluate the trained model's performance.
+    
+    Args:
+        model: Trained classifier
+        X_test: Test features
+        y_test: Test labels
+    """
+    print("\n[*] Evaluating model performance...")
+    
+    # Make predictions on test set
+    y_pred = model.predict(X_test)
+    
+    # Calculate accuracy
+    accuracy = accuracy_score(y_test, y_pred)
+    print(f"\n{'='*50}")
+    print(f"MODEL PERFORMANCE METRICS")
+    print(f"{'='*50}")
+    print(f"Accuracy: {accuracy * 100:.2f}%")
+    
+    # Print detailed classification report
+    print(f"\nClassification Report:")
+    print(classification_report(y_test, y_pred, target_names=['Safe', 'Phishing']))
+    
+    # Print confusion matrix
+    print(f"Confusion Matrix:")
+    cm = confusion_matrix(y_test, y_pred)
+    print(f"  Predicted:  Safe  Phishing")
+    print(f"  Actual Safe:   {cm[0][0]:4d}    {cm[0][1]:4d}")
+    print(f"  Actual Phish:  {cm[1][0]:4d}    {cm[1][1]:4d}")
+    print(f"{'='*50}")
+    
+    return accuracy
+def save_model(model, filepath):
+    """
+    Save the trained model to a file using pickle.
+    
+    Args:
+        model: Trained model to save
+        filepath (str): Path where to save the model
+    """
+    print(f"\n[*] Saving model to: {filepath}")
+    
+    # Create directory if it doesn't exist
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    
+    with open(filepath, 'wb') as f:
+        pickle.dump(model, f)
+    
+    print("[+] Model saved successfully!")
+def main():
+    """
+    Main function to orchestrate the model training pipeline.
+    """
+    print("="*60)
+    print("   AI-Based QR Code Phishing Detection System")
+    print("   Model Training Module")
+    print("="*60)
+    
+    # Define paths
+    dataset_path = os.path.join(os.path.dirname(__file__), '..', 'dataset', 'phishing_urls.csv')
+    model_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'phishing_model.pkl')
+    
+    # Step 1: Load the dataset
+    df = load_dataset(dataset_path)
+    if df is None:
+        return
+    
+    # Step 2: Prepare data (extract features and split)
+    X_train, X_test, y_train, y_test = prepare_data(df)
+    
+    # Step 3: Train the model
+    model = train_model(X_train, y_train)
+    
+    # Step 4: Evaluate the model
+    accuracy = evaluate_model(model, X_test, y_test)
+    
+    # Step 5: Save the model
+    save_model(model, model_path)
+    
+    print("\n[+] Training pipeline completed successfully!")
+    print(f"[+] Model saved to: {model_path}")
+    print(f"[+] Final accuracy: {accuracy * 100:.2f}%")
+# Run the training when script is executed directly
+if __name__ == "__main__":
+    main()
+code/qr_decoder.py
+python
+
+
+"""
+qr_decoder.py - QR Code Decoding Module
+This module handles:
+- Reading QR code images from files
+- Decoding QR codes to extract embedded URLs
+- Validating decoded content
+"""
+import cv2
+from pyzbar.pyzbar import decode
+from PIL import Image
+import os
+def decode_qr_image(image_path):
+    """
+    Decode a QR code image and extract the embedded URL/data.
+    
+    This function uses two methods for decoding:
+    1. OpenCV with pyzbar (primary method)
+    2. PIL with pyzbar (fallback method)
+    
+    Args:
+        image_path (str): Path to the QR code image file
+        
+    Returns:
+        str: Decoded URL/data from the QR code, or None if decoding fails
+    """
+    print(f"\n[*] Attempting to decode QR code from: {image_path}")
+    
+    # Check if file exists
+    if not os.path.exists(image_path):
+        print(f"[-] Error: Image file not found at {image_path}")
+        return None
+    
+    # Method 1: Try decoding with OpenCV
+    try:
+        print("[*] Trying OpenCV method...")
+        
+        # Read the image using OpenCV
+        image = cv2.imread(image_path)
+        
+        if image is None:
+            print("[-] OpenCV could not read the image")
+        else:
+            # Decode QR codes from the image
+            decoded_objects = decode(image)
+            
+            if decoded_objects:
+                # Extract data from the first QR code found
+                qr_data = decoded_objects[0].data.decode('utf-8')
+                print(f"[+] Successfully decoded using OpenCV!")
+                return qr_data
+            else:
+                print("[-] No QR code found using OpenCV method")
+                
+    except Exception as e:
+        print(f"[-] OpenCV method failed: {e}")
+    
+    # Method 2: Try decoding with PIL (fallback)
+    try:
+        print("[*] Trying PIL method (fallback)...")
+        
+        # Open image using PIL
+        pil_image = Image.open(image_path)
+        
+        # Decode QR codes from the PIL image
+        decoded_objects = decode(pil_image)
+        
+        if decoded_objects:
+            # Extract data from the first QR code found
+            qr_data = decoded_objects[0].data.decode('utf-8')
+            print(f"[+] Successfully decoded using PIL!")
+            return qr_data
+        else:
+            print("[-] No QR code found using PIL method")
+            
+    except Exception as e:
+        print(f"[-] PIL method failed: {e}")
+    
+    # Both methods failed
+    print("[-] Failed to decode QR code from image")
+    return None
+def validate_url(data):
+    """
+    Validate if the decoded data is a valid URL.
+    
+    Args:
+        data (str): Decoded data from QR code
+        
+    Returns:
+        bool: True if data appears to be a URL, False otherwise
+    """
+    if not data:
+        return False
+    
+    # Check for common URL patterns
+    url_indicators = ['http://', 'https://', 'www.', '.com', '.org', '.net', '.io']
+    
+    data_lower = data.lower()
+    
+    for indicator in url_indicators:
+        if indicator in data_lower:
+            return True
+    
+    return False
+def get_qr_info(image_path):
+    """
+    Get detailed information about a QR code.
+    
+    Args:
+        image_path (str): Path to the QR code image
+        
+    Returns:
+        dict: Dictionary containing QR code information
+    """
+    info = {
+        'success': False,
+        'data': None,
+        'is_url': False,
+        'qr_type': None,
+        'error': None
+    }
+    
+    try:
+        # Read the image
+        image = cv2.imread(image_path)
+        if image is None:
+            image = Image.open(image_path)
+        
+        # Decode QR codes
+        decoded_objects = decode(image)
+        
+        if decoded_objects:
+            qr_object = decoded_objects[0]
+            info['success'] = True
+            info['data'] = qr_object.data.decode('utf-8')
+            info['qr_type'] = qr_object.type
+            info['is_url'] = validate_url(info['data'])
+        else:
+            info['error'] = "No QR code found in image"
+            
+    except Exception as e:
+        info['error'] = str(e)
+    
+    return info
+def main():
+    """
+    Test function for the QR decoder module.
+    """
+    print("="*60)
+    print("   QR Code Decoder - Test Mode")
+    print("="*60)
+    
+    # Test with a sample image (you can change this path)
+    test_image = input("\nEnter path to QR code image: ").strip()
+    
+    if not test_image:
+        print("[-] No image path provided")
+        return
+    
+    # Decode the QR code
+    result = decode_qr_image(test_image)
+    
+    if result:
+        print(f"\n{'='*50}")
+        print(f"DECODED CONTENT")
+        print(f"{'='*50}")
+        print(f"Data: {result}")
+        print(f"Is URL: {validate_url(result)}")
+        print(f"{'='*50}")
+    else:
+        print("\n[-] Could not decode the QR code")
+# Run test when script is executed directly
+if __name__ == "__main__":
+    main()
+code/predict.py
+python
+
+
+"""
+predict.py - Main Prediction Module
+This module integrates all components:
+- QR code decoding
+- Feature extraction
+- ML model prediction
+- Result display
+This is the main entry point for the application.
+"""
+import pickle
+import os
+import sys
+# Import our custom modules
+from qr_decoder import decode_qr_image, validate_url
+from model import extract_features
+def load_model(model_path):
+    """
+    Load the pre-trained ML model from file.
+    
+    Args:
+        model_path (str): Path to the saved model file
+        
+    Returns:
+        model: Loaded scikit-learn model, or None if loading fails
+    """
+    print(f"[*] Loading ML model from: {model_path}")
+    
+    try:
+        with open(model_path, 'rb') as f:
+            model = pickle.load(f)
+        print("[+] Model loaded successfully!")
+        return model
+    except FileNotFoundError:
+        print(f"[-] Error: Model file not found at {model_path}")
+        print("[!] Please run model.py first to train the model")
+        return None
+    except Exception as e:
+        print(f"[-] Error loading model: {e}")
+        return None
+def predict_url(model, url):
+    """
+    Predict whether a URL is safe or phishing.
+    
+    Args:
+        model: Trained ML model
+        url (str): URL to classify
+        
+    Returns:
+        dict: Prediction result containing label, confidence, and features
+    """
+    # Extract features from the URL
+    features = extract_features(url)
+    
+    # Make prediction
+    prediction = model.predict([features])[0]
+    
+    # Get prediction probabilities (confidence scores)
+    probabilities = model.predict_proba([features])[0]
+    
+    # Prepare result
+    result = {
+        'url': url,
+        'prediction': 'PHISHING' if prediction == 1 else 'SAFE',
+        'is_phishing': bool(prediction),
+        'confidence': max(probabilities) * 100,
+        'safe_probability': probabilities[0] * 100,
+        'phishing_probability': probabilities[1] * 100,
+        'features': features
+    }
+    
+    return result
+def display_result(result):
+    """
+    Display the prediction result in a formatted manner.
+    
+    Args:
+        result (dict): Prediction result from predict_url()
+    """
+    print("\n" + "="*60)
+    print("   PREDICTION RESULT")
+    print("="*60)
+    
+    # Display URL (truncated if too long)
+    url_display = result['url']
+    if len(url_display) > 50:
+        url_display = url_display[:50] + "..."
+    print(f"\n  URL: {url_display}")
+    
+    # Display prediction with color coding (using ASCII)
+    if result['is_phishing']:
+        print(f"\n  ⚠️  STATUS: {result['prediction']} ⚠️")
+        print("  " + "-"*40)
+        print("  WARNING: This URL appears to be MALICIOUS!")
+        print("  Do NOT click this link or enter any information.")
+    else:
+        print(f"\n  ✅ STATUS: {result['prediction']} ✅")
+        print("  " + "-"*40)
+        print("  This URL appears to be safe.")
+    
+    # Display confidence scores
+    print(f"\n  Confidence Scores:")
+    print(f"  • Safe probability:     {result['safe_probability']:.1f}%")
+    print(f"  • Phishing probability: {result['phishing_probability']:.1f}%")
+    
+    # Display extracted features
+    print(f"\n  Extracted Features:")
+    feature_names = [
+        'URL Length', 'Dots', 'Hyphens', 'Underscores', 'Slashes',
+        'Digits', 'Special Chars', 'HTTPS', 'Has IP', 'Subdomains',
+        'Path Length', 'Suspicious Words'
+    ]
+    
+    for name, value in zip(feature_names, result['features']):
+        print(f"  • {name}: {value}")
+    
+    print("\n" + "="*60)
+def analyze_qr_code(image_path, model):
+    """
+    Complete pipeline: Decode QR code and analyze the URL.
+    
+    Args:
+        image_path (str): Path to QR code image
+        model: Trained ML model
+        
+    Returns:
+        dict: Complete analysis result
+    """
+    print("\n" + "="*60)
+    print("   AI-Based QR Code Phishing Detection System")
+    print("="*60)
+    
+    # Step 1: Decode QR code
+    print("\n[STEP 1] Decoding QR Code...")
+    url = decode_qr_image(image_path)
+    
+    if not url:
+        return {
+            'success': False,
+            'error': 'Failed to decode QR code'
+        }
+    
+    print(f"[+] Decoded URL: {url}")
+    
+    # Step 2: Validate URL
+    print("\n[STEP 2] Validating URL...")
+    if not validate_url(url):
+        print("[!] Warning: Decoded data may not be a valid URL")
+        print("[!] Proceeding with analysis anyway...")
+    else:
+        print("[+] Valid URL format detected")
+    
+    # Step 3: Analyze URL
+    print("\n[STEP 3] Analyzing URL with ML Model...")
+    result = predict_url(model, url)
+    
+    # Step 4: Display result
+    print("\n[STEP 4] Generating Report...")
+    display_result(result)
+    
+    result['success'] = True
+    return result
+def main():
+    """
+    Main entry point for the prediction system.
+    """
+    print("\n" + "="*60)
+    print("   AI-Based QR Code Phishing (Quishing) Detection")
+    print("   Developed for BTech Cybersecurity Mini-Project")
+    print("="*60)
+    
+    # Define model path
+    model_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'phishing_model.pkl')
+    
+    # Load the trained model
+    model = load_model(model_path)
+    
+    if model is None:
+        print("\n[!] Cannot proceed without trained model.")
+        print("[!] Run 'python model.py' first to train the model.")
+        sys.exit(1)
+    
+    # Get input from user
+    print("\n" + "-"*60)
+    print("Choose input method:")
+    print("1. Analyze QR code image")
+    print("2. Analyze URL directly")
+    print("3. Run demo with sample URLs")
+    print("-"*60)
+    
+    choice = input("\nEnter choice (1/2/3): ").strip()
+    
+    if choice == '1':
+        # QR code analysis
+        image_path = input("\nEnter path to QR code image: ").strip()
+        
+        if not image_path:
+            print("[-] No image path provided")
+            return
+        
+        analyze_qr_code(image_path, model)
+        
+    elif choice == '2':
+        # Direct URL analysis
+        url = input("\nEnter URL to analyze: ").strip()
+        
+        if not url:
+            print("[-] No URL provided")
+            return
+        
+        print("\n[*] Analyzing URL...")
+        result = predict_url(model, url)
+        display_result(result)
+        
+    elif choice == '3':
+        # Demo mode with sample URLs
+        print("\n[*] Running demo with sample URLs...\n")
+        
+        demo_urls = [
+            "[google.com](https://www.google.com)",
+            "[amazon.com](https://www.amazon.com/products)",
+            "[192.168.1.1](http://192.168.1.1/login/secure/verify)",
+            "[login-secure-bank-update.suspicious.com](http://login-secure-bank-update.suspicious.com/account)",
+            "[github.com](https://github.com/user/repository)",
+            "[free-prize-winner.com](http://free-prize-winner.com/claim-now)",
+        ]
+        
+        for url in demo_urls:
+            print("-"*60)
+            result = predict_url(model, url)
+            
+            status = "⚠️  PHISHING" if result['is_phishing'] else "✅ SAFE"
+            confidence = result['confidence']
+            
+            # Truncate long URLs
+            url_display = url if len(url) <= 45 else url[:45] + "..."
+            
+            print(f"URL: {url_display}")
+            print(f"Result: {status} (Confidence: {confidence:.1f}%)")
+            print()
+        
+        print("-"*60)
+        print("[+] Demo completed!")
+        
+    else:
+        print("[-] Invalid choice")
+        return
+# Run main function when script is executed
+if __name__ == "__main__":
+    main()
